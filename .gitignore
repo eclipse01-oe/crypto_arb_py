@@ -1,0 +1,48 @@
+# Byte-code files
+*.pyc
+__pycache__/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Editor/IDE specific files (VS Code, PyCharm, etc.)
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Environment variables
+.env
+
+# Database files (if using SQLite directly, for example)
+*.sqlite
+*.db
+
+# Data files (if generated locally and not meant for version control)
+*.csv
+*.json
+*.log
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Coverage reports
+.coverage
+
+# Pytest cache
+.pytest_cache/
+
+# Local build artifacts
+build/
+
+# Local cache
+.cache/
+
+# Local IDE files
+.idea/
