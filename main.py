@@ -1,65 +1,76 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import uvicorn
+"main script"
 
-app = FastAPI()
+import asyncio
+import time
+from config import EXCHANGE_IDS, CHECK_INTERVAL_SECONDS, TARGET_SYMBOLS
+from utils import Logger
+from exc_mngr import ExchangeManager
+from data_mngr import DataManager
+from arb_fndr import ArbitrageFinder
+from trade_exec import TradeExecutor
 
-# Configure CORS
-# For development, you might allow all origins or specific development origins.
-# In production, specify your Next.js frontend's domain(s).
-origins = [
-    "http://localhost:3000",  # Your Next.js frontend development server
-    "http://127.0.0.1:3000",
-    # Add your production frontend URL(s) here later, e.g., "https://your-nextjs-app.com"
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"], # Allows all methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"], # Allows all headers
-)
-
-# Pydantic model for incoming data (for /api/process)
-class Item(BaseModel):
-    input: str
-
-@app.get("/")
-async def read_root():
-    return {"message": "Welcome to the FastAPI Backend!"}
-
-@app.get("/api/data")
-async def get_data():
+async def main():
     """
-    Example: Return some data from the backend.
+    Main function to run the crypto arbitrage bot.
     """
-    data = {
-        "message": "Data from FastAPI backend!",
-        "timestamp": "2025-06-30T16:41:52Z" # Replace with actual dynamic timestamp
-    }
-    return data
+    Logger.info("Starting Crypto Arbitrage Bot...")
 
-@app.post("/api/process")
-async def process_data(item: Item):
-    """
-    Example: Receive data from frontend, process it, and send a response.
-    FastAPI automatically validates the incoming JSON against the Item model.
-    """
-    processed_message = f"Received: '{item.input}' and processed by FastAPI!"
-    return {"status": "success", "processed_message": processed_message}
+    # 1. Initialize Exchange Manager
+    exchange_manager = ExchangeManager(EXCHANGE_IDS)
+    if not exchange_manager.exchanges:
+        Logger.critical("No exchanges initialized. Exiting.")
+        return
 
-# You can also include custom error handling or other routes as needed
-@app.get("/api/items/{item_id}")
-async def read_item(item_id: int):
-    if item_id == 404:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return {"item_id": item_id, "description": f"This is item number {item_id}"}
+    # 2. Initialize Data Manager and start fetching tickers in background
+    data_manager = DataManager(exchange_manager)
+    # Start the periodic ticker fetching as a background task
+    asyncio.create_task(data_manager.fetch_all_tickers_periodically())
+    Logger.info("Started background data fetching for %s on %s.", TARGET_SYMBOLS, EXCHANGE_IDS)
 
+    # Give some time for initial data to be fetched
+    Logger.info("Waiting %d seconds for initial market data...", CHECK_INTERVAL_SECONDS * 2)
+    await asyncio.sleep(CHECK_INTERVAL_SECONDS * 2) 
+
+    # 3. Initialize Arbitrage Finder and Trade Executor
+    arbitrage_finder = ArbitrageFinder()
+    trade_executor = TradeExecutor(exchange_manager)
+
+    Logger.info("Bot is now actively looking for opportunities...")
+
+    while True:
+        try:
+            # Get the latest market data
+            current_market_data = data_manager.get_latest_market_data()
+
+            if not current_market_data:
+                Logger.warning("No market data available yet. Waiting...")
+                await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+
+            # 4. Find the best arbitrage opportunity
+            best_opportunity = arbitrage_finder.find_best_opportunity(current_market_data)
+
+            if best_opportunity:
+                Logger.info("Potential Arbitrage Found: %s - Buy on %s @ %s | Sell on %s @ %s | Net Profit: %.4f%%",
+                            best_opportunity['symbol'], best_opportunity['buy_exchange'], best_opportunity['buy_price'],
+                            best_opportunity['sell_exchange'], best_opportunity['sell_price'], best_opportunity['net_profit_percent'])
+                
+                # 5. Execute the trade (SIMULATED)
+                await trade_executor.execute_arbitrage_trade(best_opportunity)
+            else:
+                Logger.info("No profitable arbitrage opportunities found at the moment.")
+
+        except Exception as e:
+            Logger.error("An unexpected error occurred in the main loop: %s",e)
+
+        # Wait before the next check
+        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
 if __name__ == "__main__":
-    # To run the app directly from this file for development
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
-    # Note: 0.0.0.0 makes it accessible from other machines on the network if needed.
-    # Use reload=True for development to auto-restart server on code changes.
+    # Run the asyncio event loop
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        Logger.info("Bot stopped by user (KeyboardInterrupt).")
+    except Exception as e:
+        Logger.critical("Bot crashed: %s", e)
